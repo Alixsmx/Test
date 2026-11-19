@@ -20,18 +20,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Pobierz repozytorium
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      # 2. Java 21 (wymagana przez AGP 9 / Gradle 9)
       - name: Set up Java
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
 
-      # 3. Licencje + próba instalacji SDK (brakujące pakiety dociągnie Gradle)
       - name: Install Android SDK
         shell: bash
         run: |
@@ -53,11 +50,7 @@ jobs:
 
           yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null || true
 
-          echo "Dostępne platformy:"
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --list 2>/dev/null \
-            | grep -E 'platforms;android-3[0-9]' | sort -u || true
-
-          for PKG in "platform-tools" "platforms;android-37.0" "platforms;android-37" "build-tools;37.0.0"; do
+          for PKG in "platform-tools" "platforms;android-37.0" "build-tools;37.0.0"; do
             "$SDKMANAGER" --sdk_root="$SDK_ROOT" "$PKG" || echo "Pominięto: $PKG"
           done
 
@@ -65,7 +58,6 @@ jobs:
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
 
-      # 4. Odnalezienie projektu: gotowe pliki w repo albo ZIP z gradlew
       - name: Prepare CART3R Cleaner source
         shell: bash
         run: |
@@ -104,43 +96,7 @@ jobs:
             rm -rf "$DEST"
             mkdir -p "$DEST"
 
-            python3 - "$ARCHIVE" "$DEST" <<'PY'
-            import sys
-            import stat
-            import zipfile
-            import shutil
-            from pathlib import Path, PurePosixPath
-
-            archive = Path(sys.argv[1])
-            destination = Path(sys.argv[2]).resolve()
-
-            with zipfile.ZipFile(archive) as z:
-                for item in z.infolist():
-                    name = item.filename.replace("\\", "/")
-                    relative = PurePosixPath(name)
-
-                    if relative.is_absolute() or ".." in relative.parts:
-                        raise SystemExit(f"Niebezpieczna ścieżka w ZIP: {name}")
-
-                    if stat.S_ISLNK(item.external_attr >> 16):
-                        raise SystemExit(f"Archiwum zawiera niedozwolony link: {name}")
-
-                    target = (destination / Path(*relative.parts)).resolve()
-
-                    if target != destination and destination not in target.parents:
-                        raise SystemExit(f"Plik wychodzi poza katalog projektu: {name}")
-
-                    if item.is_dir():
-                        target.mkdir(parents=True, exist_ok=True)
-                        continue
-
-                    target.parent.mkdir(parents=True, exist_ok=True)
-
-                    with z.open(item) as source, target.open("wb") as output:
-                        shutil.copyfileobj(source, output)
-
-            print("Archiwum poprawnie rozpakowane.")
-            PY
+            unzip -q -o "$ARCHIVE" -d "$DEST"
 
             WRAPPER="$(find "$DEST" -type f -name gradlew -print -quit)"
 
@@ -171,11 +127,9 @@ jobs:
           echo "Projekt CART3R Cleaner gotowy."
           echo "Katalog: $PROJECT_DIR"
 
-      # 5. Konfiguracja Gradle po przygotowaniu projektu
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      # 6. Kompilacja aplikacji (release podpisany kluczem debug, da się zainstalować)
       - name: Build CART3R Cleaner APK
         shell: bash
         run: |
@@ -188,7 +142,6 @@ jobs:
             --stacktrace \
             assembleRelease
 
-      # 7. Sprawdzenie i przygotowanie APK
       - name: Verify APK
         shell: bash
         run: |
@@ -211,7 +164,6 @@ jobs:
           echo "APK poprawnie wygenerowane."
           ls -lh "$GITHUB_WORKSPACE/output/CART3R-Cleaner.apk"
 
-      # 8. Udostępnienie gotowej aplikacji
       - name: Upload CART3R Cleaner APK
         uses: actions/upload-artifact@v7
         with:
